@@ -1,5 +1,9 @@
-import compiler, sys
+#!/usr/bin/python
+
+import compiler, sys, os
 from compiler.ast import *
+#from compiler.visitor import ASTVisitor
+from x86ast import *
 
 temp_counter = -1
 def new_temp(prefix):
@@ -97,81 +101,81 @@ current_offset = 0
 stack_map = {}
 def allocate(var, size):
     global current_offset, stack_map
+    if var in stack_map:
+        return stack_map[var]
     current_offset = size + current_offset
     stack_map[var] = current_offset
     return current_offset
 
-def compile_stmt(ast, value_mode='movl'):
+EAX = Reg86('eax')
+EBP = Reg86('ebp')
+ESP = Reg86('esp')
+
+def instr_select(ast, value_mode=Move86):
     global stack_map
     if isinstance(ast, Module):
-        return ['pushl %ebp', 'movl %esp, %ebp', ('subl $%d, %%esp' % (len(scan_allocs(ast)) * 4))] + compile_stmt(ast.node) + ['movl $0, %eax', 'leave', 'ret']
+        return [Push86(EBP), Move86(ESP, EBP), Sub86(Const86(len(scan_allocs(ast)) * 4), ESP)] + instr_select(ast.node) + [Move86(Const86(0), EAX), Leave86(), Ret86()]
     elif isinstance(ast, Stmt):
-        return sum(map(compile_stmt, ast.nodes),[])
+        return sum(map(instr_select, ast.nodes),[])
     elif isinstance(ast, Printnl):
-        return compile_stmt(ast.nodes[0]) + ['pushl %eax', 'call print_int_nl', 'addl $4, %esp']
+        return instr_select(ast.nodes[0]) + [Push86(EAX), Call86('print_int_nl'), Add86(Const86(4), ESP)]
     elif isinstance(ast, Assign):
-        expr_assemb = compile_stmt(ast.expr)
+        expr_assemb = instr_select(ast.expr)
         offset = allocate(ast.nodes[0].name, 4)
-        return expr_assemb + [('movl %%eax, -%d(%%ebp)' % offset)]
+        return expr_assemb + [Move86(EAX, Mem86(offset, EBP))]
     elif isinstance(ast, Discard):
-        return compile_stmt(ast.expr)
+        return instr_select(ast.expr)
     elif isinstance(ast, Add):
-        return compile_stmt(ast.left) + compile_stmt(ast.right, value_mode='addl')
+        return instr_select(ast.left) + instr_select(ast.right, value_mode=Add86)
     elif isinstance(ast, UnarySub):
-        return ['negl %eax']
+        return instr_select(ast.expr) + [Neg86(EAX)]
     elif isinstance(ast, CallFunc):
-        return ['call input']
+        return [Call86('input')]
     elif isinstance(ast, Const):
-        return [('%s %d, %%eax' % (value_mode, ast.value))]
+        return [value_mode(Const86(ast.value), EAX)]
     elif isinstance(ast, Name):
-        return [('%s -%d(%%ebp), %%eax' % (value_mode, stack_map[ast.name]))]
+        return [value_mode(Mem86(stack_map[ast.name], EBP), EAX)]
     else:
         raise Exception("Unexpected term: " + str(ast))
 
 def compile_string(s):
     ast = compiler.parse(s)
     fast = flatten(ast)[0]
-    assembly = compile_stmt(fast)
+    assembly = instr_select(fast)
     print '.globl main\nmain:\n\t' + '\n\t'.join(assembly)
 
-def compile_file(file_name):
-    output_name = file_name.split('.')
-    output_name = '.'.join(output_name[0:len(output_name)-1]) + '.s'
-    
+def compile_file(file_name, output_name):
     input_file = open(file_name)
     source = input_file.read()
     input_file.close()
 
     ast = compiler.parse(source)
     fast = flatten(ast)
-    assembly = compile_stmt(fast)
-    assembly = '.globl main\nmain:\n\t' + '\n\t'.join(assembly)
+    
+    assembly = instr_select(fast)
+    assembly = '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
     
     output_file = open(output_name, 'w+')
     output_file.write(assembly)
+    output_file.close()
 
-def ast_to_source(ast, level):
-    if isinstance(ast, Module):
-        return ast_to_source(ast.node, level)
-    elif isinstance(ast, Stmt):
-        return "\n".join(map(lambda x: ast_to_source(x, level), ast.nodes))
-    elif isinstance(ast, Printnl):
-        return "print " + ", ".join(map(lambda x: ast_to_source(x, level), ast.nodes))
-    elif isinstance(ast, Assign):
-        return " = ".join(map(lambda x: ast_to_source(x, level), ast.nodes)) + " = " + ast_to_source(ast.expr, level)
-    elif isinstance(ast, AssName):
-        return ast.name
-    elif isinstance(ast, Discard):
-        return ast_to_source(ast.expr, level)
-    elif isinstance(ast, Const):
-        return str(ast.value)
-    elif isinstance(ast, Name):
-        return ast.name
-    elif isinstance(ast, Add):
-        return "(" + ast_to_source(ast.left, level) + " + " + ast_to_source(ast.right, level) + ")"
-    elif isinstance(ast, UnarySub):
-        return "(-" + ast_to_source(ast.expr, level) + ")"
-    elif isinstance(ast, CallFunc):
-        return ast_to_expr(ast.node, level) + "(" + ", ".join(map(lambda x: ast_to_source(x, level), ast.args)) + ")"
-    
-compile_file(sys.argv[1])
+files = []
+assemble = False
+execute = False
+for i in xrange(1, len(sys.argv)):
+    opt = sys.argv[i]
+    if opt == '-a':
+        assemble = True
+    if opt == '-e':
+        assemble = execute = True
+    else: files.append(opt)
+
+for input_name in files:
+    name_split = input_name.split('.')
+    base_name = '.'.join(name_split[0:len(name_split)-1])
+    output_name = base_name + '.s'
+    compile_file(input_name, output_name)
+    if assemble:
+        os.system(('gcc -m32 -o %s.out %s *.o -lm' % (base_name, output_name)))
+    if execute:
+        os.system(('./%s.out' % base_name))
