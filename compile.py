@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import compiler, sys, os
+import compiler, sys, os, parse
 from compiler.ast import *
 #from compiler.visitor import ASTVisitor
 from x86ast import *
@@ -139,17 +139,18 @@ def instr_select(ast, value_mode=Move86):
         raise Exception("Unexpected term: " + str(ast))
 
 def compile_string(s):
-    ast = compiler.parse(s)
-    fast = flatten(ast)[0]
+    ast = parse.parse(s)
+    fast = flatten(ast)
     assembly = instr_select(fast)
-    print '.globl main\nmain:\n\t' + '\n\t'.join(assembly)
+
+    print '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
 
 def compile_file(file_name, output_name):
     input_file = open(file_name)
     source = input_file.read()
     input_file.close()
 
-    ast = compiler.parse(source)
+    ast = parse.parse(source)
     fast = flatten(ast)
     
     assembly = instr_select(fast)
@@ -160,15 +161,25 @@ def compile_file(file_name, output_name):
     output_file.close()
 
 files = []
+strings = []
 assemble = False
 execute = False
+string = False
 for i in xrange(1, len(sys.argv)):
     opt = sys.argv[i]
-    if opt == '-a':
+    if string:
+        strings.append(opt)
+        string = False
+    elif opt == '-s':
+        string = True
+    elif opt == '-a':
         assemble = True
-    if opt == '-e':
+    elif opt == '-e':
         assemble = execute = True
     else: files.append(opt)
+
+for input_string in strings:
+    compile_string(input_string)
 
 for input_name in files:
     name_split = input_name.split('.')

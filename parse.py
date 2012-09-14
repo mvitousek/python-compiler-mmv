@@ -9,8 +9,8 @@ precedence = (
     )
 
 def p_module(t):
-    'module : stmt_list'
-    t[0] = Module(None, Stmt(t[1]))
+    'module : mnls stmt_list'
+    t[0] = Module(None, Stmt(t[2]))
 
 def p_stmt_list_multi(t):
     'stmt_list : stmt nls stmt_list'
@@ -94,5 +94,4 @@ def parse(s):
     if parser == None:
         parser = yacc.yacc()
     ast = parser.parse(s)
-    print ast
     return ast
