@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import compiler, sys, os, parse
+import compiler, sys, os, parse, regalloc
 from compiler.ast import *
 #from compiler.visitor import ASTVisitor
 from x86ast import *
@@ -108,39 +108,50 @@ def allocate(var, size):
     return current_offset
 
 EAX = Reg86('eax')
+EBX = Reg86('ebx')
+ECX = Reg86('ecx')
+EDX = Reg86('edx')
+ESI = Reg86('esi')
+EDI = Reg86('edi')
 EBP = Reg86('ebp')
 ESP = Reg86('esp')
 
-def instr_select(ast, value_mode=Move86):
+def arg_select(ast):
+    if isinstance(ast, Name):
+        return Var86(ast.name)
+    elif isinstance(ast, Const):
+        return Const86(ast.value)
+
+def instr_select(ast, write_target=Var86('discard')):
     global stack_map
     if isinstance(ast, Module):
-        return [Push86(EBP), Move86(ESP, EBP), Sub86(Const86(len(scan_allocs(ast)) * 4), ESP)] + instr_select(ast.node) + [Move86(Const86(0), EAX), Leave86(), Ret86()]
+        return instr_select(ast.node)
     elif isinstance(ast, Stmt):
         return sum(map(instr_select, ast.nodes),[])
     elif isinstance(ast, Printnl):
-        return instr_select(ast.nodes[0]) + [Push86(EAX), Call86('print_int_nl'), Add86(Const86(4), ESP)]
+        return [Push86(arg_select(ast.nodes[0])), Call86('print_int_nl'), Add86(Const86(4), ESP)]
     elif isinstance(ast, Assign):
-        expr_assemb = instr_select(ast.expr)
-        offset = allocate(ast.nodes[0].name, 4)
-        return expr_assemb + [Move86(EAX, Mem86(offset, EBP))]
+        return instr_select(ast.expr, Var86(ast.nodes[0].name))
     elif isinstance(ast, Discard):
         return instr_select(ast.expr)
     elif isinstance(ast, Add):
-        return instr_select(ast.left) + instr_select(ast.right, value_mode=Add86)
+        return [Move86(arg_select(ast.left), write_target), Add86(arg_select(ast.right), write_target)]
     elif isinstance(ast, UnarySub):
-        return instr_select(ast.expr) + [Neg86(EAX)]
+        return [Move86(arg_select(ast.expr), write_target), Neg86(write_target)]
     elif isinstance(ast, CallFunc):
-        return [Call86('input')]
+        return [Call86('input'), Move86(EAX, write_target)]
     elif isinstance(ast, Const):
-        return [value_mode(Const86(ast.value), EAX)]
+        return [Move86(Const86(ast.value), write_target)]
     elif isinstance(ast, Name):
-        return [value_mode(Mem86(stack_map[ast.name], EBP), EAX)]
+        return [Move86(Var86(ast.name), write_target)]
     else:
         raise Exception("Unexpected term: " + str(ast))
 
 def compile_string(s):
     ast = parse.parse(s)
     fast = flatten(ast)
+
+    print fast
     assembly = instr_select(fast)
 
     print '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
@@ -152,8 +163,9 @@ def compile_file(file_name, output_name):
 
     ast = parse.parse(source)
     fast = flatten(ast)
-    
+
     assembly = instr_select(fast)
+    assembly = regalloc.regalloc(assembly)
     assembly = '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
     
     output_file = open(output_name, 'w+')
@@ -190,3 +202,11 @@ for input_name in files:
         os.system(('gcc -m32 -o %s.out %s *.o -lm' % (base_name, output_name)))
     if execute:
         os.system(('./%s.out' % base_name))
+
+
+
+
+# Liveness analysis
+# Lbefore(k)=(Lafter(k) \ Writes(k)) U Reads(k)
+# Lafter(k)=Lbefore(k+1)
+# Lafter(n)={} when n is final instr

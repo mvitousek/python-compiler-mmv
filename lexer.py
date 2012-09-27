@@ -14,7 +14,7 @@ tokens = [
     ] + list(reserved.values())
 
 t_ignore = ' \t'
-t_ignore_COMMENT = r'\#[^\n]*'
+t_ignore_COMMENT = r'\#[^\n\r]*'
 
 def t_error(t):
     print 'illegal character: %s' % t.value[0]
@@ -29,8 +29,9 @@ def t_INT(t):
     return t
 
 def t_NL(t):
-    r'\n+'
+    r'[\n\r]+'
     t.lexer.lineno += t.value.count('\n')
+    t.lexer.lineno += t.value.count('\r')
     return t
 
 def t_NAME(t):

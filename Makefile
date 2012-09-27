@@ -24,9 +24,11 @@ TESTCASESASSEMB = $(patsubst test/%.py,test/%.s,$(TESTCASESSOURCE))
 TESTCASES = $(patsubst test/%.s,test/%.out,$(TESTCASESASSEMB))
 TESTDIFFS = $(patsubst test/%.s,test/%.diff,$(TESTCASESASSEMB))
 
-.PHONY: all test clean submission
+.PHONY: all test clean submission helper
 
 all: test
+
+helper: runtime.o hashtable.o hashtable_itr.o hashtable_utility.o
 
 test: $(TESTDIFFS)
 	cat test/*.diff
@@ -61,7 +63,7 @@ submission:
 	$(CP) *.py $(SUBMISSIONDIR)
 	$(CP) -r ply $(SUBMISSIONDIR)
 	$(CP) $(HELPERDIR)* $(SUBMISSIONDIR)
-	zip -r submit.zip $(SUBMISSIONDIR)*
+	cd $(SUBMISSIONDIR) && zip -r ../submit.zip *
 	$(RM) -r $(SUBMISSIONDIR)
 
 clean:
