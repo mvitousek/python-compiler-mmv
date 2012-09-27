@@ -128,6 +128,7 @@ def interference(instrs, l_after):
     return igraph
 
 def color(igraph, colors, unspillable):
+    colors = colors.copy()
     saturations = {}
     for u in igraph.keys():
         if not (u in colors):
