@@ -4,12 +4,7 @@ import compiler, sys, os, parse, regalloc
 from compiler.ast import *
 #from compiler.visitor import ASTVisitor
 from x86ast import *
-
-temp_counter = -1
-def new_temp(prefix):
-    global temp_counter
-    temp_counter = temp_counter + 1
-    return prefix + str(temp_counter)
+from regalloc import new_temp
 
 def is_leaf(ast):
     return isinstance(ast, Const) or isinstance(ast, Name)

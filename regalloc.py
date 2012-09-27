@@ -29,6 +29,12 @@ coloredregs = [EAX, EBX, ECX, EDX, ESI, EDI]
 
 memlocs = 0
 
+temp_counter = -1
+def new_temp(prefix):
+    global temp_counter
+    temp_counter = temp_counter + 1
+    return prefix + str(temp_counter)
+
 def regalloc(instrs):
     instrs = allocate(instrs, regcolors, [])
     return [Push86(EBP), Move86(ESP, EBP), Sub86(Const86(memlocs * 4), ESP)] + instrs + [Move86(Const86(0), EAX), Leave86(), Ret86()]
@@ -44,7 +50,7 @@ def allocate(instrs, colors, unspillable):
     selected_instrs = location_select(instrs, colors)
     spill_lines = spills(selected_instrs)
     if spill_lines:
-        (new_unspillable, new_instrs) = generate_spills(instrs, spill_lines)
+        (new_instrs, new_unspillable) = generate_spills(instrs, spill_lines)
         colors = dict(regcolors.items() + filter(lambda (k,v): v > 5, colors.items()))
         return allocate(new_instrs, colors, new_unspillable + unspillable)
     else: return filter(lambda instr: not trivial(instr), selected_instrs)
@@ -127,7 +133,7 @@ def color(igraph, colors, unspillable):
         if not (u in colors):
             colors[u] = None
     for u in igraph.keys():
-        saturations[u] = len(set(filter(lambda c: c != None, map(lambda v: colors[v], list(igraph[u])))))
+        saturations[u] = len(set(filter(lambda c: c != None, map(lambda v: colors[v], list(igraph[u]))))) + (len(igraph.keys()) if u in unspillable else 0)
     w = filter(lambda u: colors[u] == None, igraph.keys())
     while len(w) > 0:
         u = w[0]
@@ -157,7 +163,7 @@ def location_select(instrs, colors):
             memloc = color - 5
             if memloc > memlocs:
                 memlocs = memloc
-            return Mem86(memloc * 4)
+            return Mem86(memloc * 4, ESP)
     def arg_select(arg):
         if isinstance(arg, Var86):
             return select_location(colors[name(arg)])
@@ -196,6 +202,7 @@ def generate_spills(instrs, spill_lines):
         instrs[i].value = Var86(temp)
         instrs.insert(i, Move86(lhs, Var86(temp)))
         unspillables.append(temp)
+        offset += 1
     return instrs, unspillables
 
 def trivial(instr):
