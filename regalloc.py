@@ -164,7 +164,7 @@ def location_select(instrs, colors):
             memloc = color - 5
             if memloc > memlocs:
                 memlocs = memloc
-            return Mem86(memloc * 4, ESP)
+            return Mem86(memloc * 4, EBP)
     def arg_select(arg):
         if isinstance(arg, Var86):
             return select_location(colors[name(arg)])

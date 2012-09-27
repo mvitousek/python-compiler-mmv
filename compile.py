@@ -143,20 +143,14 @@ def instr_select(ast, write_target=Var86('discard')):
         raise Exception("Unexpected term: " + str(ast))
 
 def compile_string(s):
-    ast = parse.parse(s)
+    compiler.parse(s)
     fast = flatten(ast)
-
-    print fast
     assembly = instr_select(fast)
 
     print '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
 
 def compile_file(file_name, output_name):
-    input_file = open(file_name)
-    source = input_file.read()
-    input_file.close()
-
-    ast = parse.parse(source)
+    ast = compiler.parseFile(file_name)
     fast = flatten(ast)
 
     assembly = instr_select(fast)
