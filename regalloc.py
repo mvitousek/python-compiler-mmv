@@ -63,24 +63,24 @@ def liveness(instrs):
         if (isinstance(val, Var86) or isinstance(val, Reg86)) and name(val) in lst:
             lst.remove(name(val))
     def liveness_analysis(instrs, current_live):
-        if instrs == []:
-            return []
-        instr = instrs[0]
-        if isinstance(instr, Add86) or isinstance(instr, Sub86):
-            add_varreg(instr.value, current_live)
-            add_varreg(instr.target, current_live)
-        elif isinstance(instr, Move86):
-            try_remove(instr.target, current_live)
-            add_varreg(instr.value, current_live)
-        elif isinstance(instr, Push86):
-            add_varreg(instr.value, current_live)
-        elif isinstance(instr, Neg86):
-            add_varreg(instr.target, current_live)
-        elif isinstance(instr, Call86):
-            try_remove(EAX, current_live)
-            try_remove(ECX, current_live)
-            try_remove(EDX, current_live)
-        return [current_live.copy()] + liveness_analysis(instrs[1:], current_live)
+        liveness = []
+        for instr in instrs:
+            if isinstance(instr, Add86) or isinstance(instr, Sub86):
+                add_varreg(instr.value, current_live)
+                add_varreg(instr.target, current_live)
+            elif isinstance(instr, Move86):
+                try_remove(instr.target, current_live)
+                add_varreg(instr.value, current_live)
+            elif isinstance(instr, Push86):
+                add_varreg(instr.value, current_live)
+            elif isinstance(instr, Neg86):
+                add_varreg(instr.target, current_live)
+            elif isinstance(instr, Call86):
+                try_remove(EAX, current_live)
+                try_remove(ECX, current_live)
+                try_remove(EDX, current_live)
+            liveness += [current_live.copy()]
+        return liveness
     instrs = instrs[:]
     instrs.reverse()
     l_before = liveness_analysis(instrs, set([]))
@@ -117,6 +117,10 @@ def interference(instrs, l_after):
             for v in live:
                 if v != name(instr.target):
                     add_edge(name(instr.target), v)
+        elif isinstance(instr, Push86) and valid_node(instr.value):
+            for v in live:
+                if v != name(instr.value):
+                    add_edge(name(instr.value), v)
         elif isinstance(instr, Call86):
             for v in live:
                 if v != name(EAX):

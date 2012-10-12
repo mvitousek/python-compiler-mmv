@@ -78,6 +78,72 @@ class Call86(X86Inst):
     def mnemonic(self):
         return 'call ' + self.function
 
+class LShift86(X86Inst):
+    def __init__(self, value, target):
+        self.value = value
+        self.target = target
+    def mnemonic(self):
+        return ('sall %s, %s' % (self.value.mnemonic(), self.target.mnemonic()))
+
+class RShift86(X86Inst):
+    def __init__(self, value, target):
+        self.value = value
+        self.target = target
+    def mnemonic(self):
+        return ('sarl %s, %s' % (self.value.mnemonic(), self.target.mnemonic()))    
+
+class Or86(X86Inst):
+    def __init__(self, value, target):
+        self.value = value
+        self.target = target
+    def mnemonic(self):
+        return ('orl %s, %s' % (self.value.mnemonic(), self.target.mnemonic()))
+
+class And86(X86Inst):
+    def __init__(self, value, target):
+        self.value = value
+        self.target = target
+    def mnemonic(self):
+        return ('andl %s, %s' % (self.value.mnemonic(), self.target.mnemonic()))
+
+class Comp86(X86Inst):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+    def mnemonic(self):
+        return ('cmpl %s, %s' % (self.left.mnemonic(), self.right.mnemonic()))
+
+class SetEq86(X86Inst):
+    def __init__(self, target):
+        self.target = target
+    def mnemonic(self):
+        return ('sete %s' % self.target.mnemonic())
+
+class SetNEq86(X86Inst):
+    def __init__(self, target):
+        self.target = target
+    def mnemonic(self):
+        return ('setne %s' % self.target.mnemonic())
+
+class Jump86(X86Inst):
+    def __init__(self, target):
+        self.target = target
+    def mnemonic(self):
+        return ('jmp %s' % self.target)
+
+class JumpIf86(X86Inst):
+    def __init__(self, target):
+        self.target = target
+    def mnemonic(self):
+        return ('je %s' % self.target)
+
+class If86(X86Inst):
+    def __init__(self, then, else_):
+        self.then = then
+        self.else_ = else_
+    def mnemonic(self):
+        return 'if:\n' + '\n'.join(map(lambda x: x.mnemonic(), self.then)) + '\nelse:\n' + '\n'.join(map(lambda x: x.mnemonic(), self.else_))
+
 class Leave86(X86Inst):
     def mnemonic(self):
         return 'leave'
