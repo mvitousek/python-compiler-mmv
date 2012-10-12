@@ -5,6 +5,7 @@ from compiler.ast import *
 #from compiler.visitor import ASTVisitor
 from x86ast import *
 from regalloc import new_temp
+from pyast import *
 
 INT_TAG = Const(0)
 BOOL_TAG = Const(1)
@@ -13,9 +14,9 @@ BIG_TAG = Const(2)
 
 INT_TAG_COMP = [('==', Const(0))]
 BOOL_TAG_COMP = [('==', Const(1))]
-BIG_TAG_COMP = [('==', Const(2))]
+BIG_TAG_COMP = [('==', Const(3))]
 
-DYN_ERR = CallFunc(Name('error_pyobj'))
+DYN_ERR = CallFunc(Name('error_pyobj'), [])
 INT_ERR = ProjectTo(INT_TAG, DYN_ERR)
 BOOL_ERR = ProjectTo(BOOL_TAG, DYN_ERR)
 BIG_ERR = ProjectTo(BIG_TAG, DYN_ERR)
@@ -23,18 +24,38 @@ BIG_ERR = ProjectTo(BIG_TAG, DYN_ERR)
 def is_leaf(ast):
     return isinstance(ast, Const) or isinstance(ast, Name)
 
+
+def make_and(nodes, last=BOOL_ERR):
+    if nodes:
+        node = nodes[0]
+        ntemp = Name(new_temp('and'))
+        return Let(ntemp, node, IfExp(ntemp,
+                                      Compare(ntemp, [('==', Const(0))]),
+                                      make_and(nodes[1:], ntemp)))
+    else:
+        return last
+def make_or(nodes, last=BOOL_ERR):
+    if nodes:
+        node = nodes[0]
+        ntemp = Name(new_temp('or'))
+        return Let(ntemp, node, IfExp(ntemp,
+                                      Compare(ntemp, [('==', Const(1))]),
+                                      make_or(nodes[1:], ntemp)))
+    else:
+        return last
+
+
 def is_true(n):
     return IfExp(Compare(ProjectTo(BOOL_TAG, n), [('==', Const(1))]),
-                 Or([Compare(GetTag(n), INT_TAG_COMP),
-                     Compare(GetTag(n), BOOL_TAG_COMP])),
-                 CallFunc('is_true', n))
+                 make_or([Compare(GetTag(n), INT_TAG_COMP),
+                     Compare(GetTag(n), BOOL_TAG_COMP)]),
+                 CallFunc(Name('is_true'), [n]))
 
 def is_false(n):
     return IfExp(Compare(ProjectTo(BOOL_TAG, n), [('==', Const(0))]),
-                 Or([Compare(GetTag(n), INT_TAG_COMP),
+                 make_or([Compare(GetTag(n), INT_TAG_COMP),
                      Compare(GetTag(n), BOOL_TAG_COMP)]),
-                 Compare(CallFunc('is_true', [n]), [('==', Const(0))]))
-
+                 Compare(CallFunc(Name('is_true'), [n]), [('==', Const(0))]))
 
 def explicate(ast):
     if isinstance(ast, Module):
@@ -58,18 +79,18 @@ def explicate(ast):
                    Let(rtemp,
                        right,
                        IfExp(InjectFrom(INT_TAG, Add((ProjectTo(INT_TAG, ltemp), ProjectTo(INT_TAG, rtemp)))),
-                             And([Or([Compare(GetTag(ltemp),
+                             make_and([make_or([Compare(GetTag(ltemp),
                                               INT_TAG_COMP),
                                       Compare(GetTag(ltemp),
                                               BOOL_TAG_COMP)]),
-                                  Or([Compare(GetTag(rtemp),
+                                  make_or([Compare(GetTag(rtemp),
                                               INT_TAG_COMP),
                                       Compare(GetTag(rtemp),
                                               BOOL_TAG_COMP)])]),
                              IfExp(InjectFrom(BIG_TAG, CallFunc(Name('add'),
                                                                 [ProjectTo(BIG_TAG, ltemp),
                                                                  ProjectTo(BIG_TAG, rtemp)])),
-                                   And([Compare(GetTag(ltemp),
+                                   make_and([Compare(GetTag(ltemp),
                                                 BIG_TAG_COMP),
                                         Compare(GetTag(rtemp),
                                                 BIG_TAG_COMP)]),
@@ -80,7 +101,7 @@ def explicate(ast):
         return Let(temp,
                    expr,
                    IfExp(InjectFrom(INT_TAG, UnarySub(ProjectTo(INT_TAG, temp))),
-                         Or([Compare(GetTag(temp), INT_TAG_COMP),
+                         make_or([Compare(GetTag(temp), INT_TAG_COMP),
                              Compare(GetTag(temp), BOOL_TAG_COMP)]),
                          DYN_ERR))
     elif isinstance(ast, Compare):
@@ -97,18 +118,18 @@ def explicate(ast):
                        IfExp(InjectFrom(BOOL_TAG, 
                                         Compare(ProjectTo(INT_TAG, etemp), 
                                                 [(op, ProjectTo(INT_TAG, ctemp))])),
-                             And([Or([Compare(GetTag(etemp),
+                             make_and([make_or([Compare(GetTag(etemp),
                                               INT_TAG_COMP),
                                       Compare(GetTag(etemp),
                                               BOOL_TAG_COMP)]),
-                                  Or([Compare(GetTag(ctemp),
+                                  make_or([Compare(GetTag(ctemp),
                                               INT_TAG_COMP),
                                       Compare(GetTag(ctemp),
                                               BOOL_TAG_COMP)])]),
                              IfExp(InjectFrom(BOOL_TAG, CallFunc(Name('equal'),
                                                                  [ProjectTo(BIG_TAG, ltemp),
                                                                   ProjectTo(BIG_TAG, rtemp)])),
-                                   And([Compare(GetTag(ltemp),
+                                   make_and([Compare(GetTag(ltemp),
                                                 BIG_TAG_COMP),
                                         Compare(GetTag(rtemp),
                                                 BIG_TAG_COMP)]),
@@ -140,7 +161,7 @@ def explicate(ast):
         etemp = Name(new_temp('not'))
         return Let(etemp, expr, IfExp(InjectFrom(BOOL_TAG, Compare(ProjectTo(BOOL_TAG, etemp), 
                                                                    [('==', Const(0))])),
-                                      Or(Compare(GetTag(etemp), BOOL_TAG_COMP),
+                                      make_or(Compare(GetTag(etemp), BOOL_TAG_COMP),
                                          Compare(GetTag(etemp), INT_TAG_COMP)),
                                       InjectFrom(BOOL_TAG, Compare(CallFunc(Name('is_true'),[etemp]),
                                                                    [('==', Const(0))]))))
@@ -237,21 +258,21 @@ def flatten(ast, extra_flat=False):
         return (UnarySub(expr), stmts)
     elif isinstance(ast, GetTag):
         expr, stmts = flatten(ast.expr)
-        if not is_leaf(expr) or extra_flat:
+        if not isinstance(expr, Name):
             temp = new_temp("gettag")
             stmts.append(Assign([AssName(temp, 'OP_ASSIGN')], expr))
             expr = Name(temp)
         return (GetTag(expr), stmts)
     elif isinstance(ast, InjectFrom):
         expr, stmts = flatten(ast.expr)
-        if not is_leaf(expr) or extra_flat:
+        if not isinstance(expr, Name):
             temp = new_temp("inject")
             stmts.append(Assign([AssName(temp, 'OP_ASSIGN')], expr))
             expr = Name(temp)
         return (InjectFrom(ast.type, expr), stmts)
     elif isinstance(ast, ProjectTo):
         expr, stmts = flatten(ast.expr)
-        if not is_leaf(expr) or extra_flat:
+        if not isinstance(expr, Name):
             temp = new_temp("project")
             stmts.append(Assign([AssName(temp, 'OP_ASSIGN')], expr))
             expr = Name(temp)
@@ -259,8 +280,7 @@ def flatten(ast, extra_flat=False):
     elif isinstance(ast, Let):
         expr, stmts = flatten(ast.rhs)
         rest_expr, rest_stmts = flatten(ast.body)
-        temp = new_temp('let')
-        return (rest_expr, stmts + [Assign([AssName(temp, 'OP_ASSIGN')], expr)] + rest_stmts)
+        return (rest_expr, stmts + [Assign([AssName(ast.name.name, 'OP_ASSIGN')], expr)] + rest_stmts)
     elif isinstance(ast, CallFunc):
         expr, stmts = flatten(ast.node)
         if not is_leaf(expr) or extra_flat:
@@ -303,18 +323,18 @@ def flatten(ast, extra_flat=False):
                 temp = new_temp("item")
                 nstmts.append(Assign([AssName(temp, 'OP_ASSIGN')], nexpr))
                 nexpr = Name(temp)
-            temp = new_temp('index' + i)
+            temp = new_temp('index' + str(i))
             nstmts.append(Assign([AssName(temp, 'OP_ASSIGN')], InjectFrom(INT_TAG, Const(i))))
             stmts = stmts + nstmts
-            adds.append(CallFunc('set_subscript', [Name(lname), Name(temp), nexpr]))
+            adds.append(CallFunc(Name('set_subscript'), [Name(lname), Name(temp), nexpr]))
         return (Name(lname), [Assign([AssName(lenname, 'OP_ASSIGN')], list_len),
                               Assign([AssName(lname, 'OP_ASSIGN')], 
-                                     CallFunc('create_list', [Name(lenname)]))] + nstmts + adds)
+                                     CallFunc(Name('create_list'), [Name(lenname)]))] + nstmts + adds)
     elif isinstance(ast, List):
         lname = new_temp('dict')
         stmts = []
         adds = []
-        for name, val in ast.items
+        for name, val in ast.items:
             nexpr, nstmts = flatten(name)
             vexpr, vstmts = flatten(val)
             if not is_leaf(nexpr) or extra_flat:
@@ -326,9 +346,10 @@ def flatten(ast, extra_flat=False):
                 vstmts.append(Assign([AssName(temp, 'OP_ASSIGN')], vexpr))
                 vexpr = Name(temp)
             stmts = stmts + nstmts + vstmts
-            adds.append(CallFunc('set_subscript', [Name(lname), nexpr, vexpr]))
+            adds.append(CallFunc(Name('set_subscript'), [Name(lname), nexpr, vexpr]))
         return (Name(lname), [Assign([AssName(lname, 'OP_ASSIGN')], 
-                                     CallFunc('create_dict', []))] + nstmts + adds)
+                                     CallFunc(Name('create_dict'), []))] + nstmts + adds)
+    else: raise Exception('Unexpected term to be flattened ' + repr(ast))
 
 current_offset = 0
 stack_map = {}
@@ -354,6 +375,7 @@ def arg_select(ast):
         return Var86(ast.name)
     elif isinstance(ast, Const):
         return Const86(ast.value)
+    else: raise Exception('unexpected term in argument: ' + repr(ast) + str(type(ast)))
 
 def instr_select(ast, write_target=Var86('discard')):
     global stack_map
@@ -369,6 +391,7 @@ def instr_select(ast, write_target=Var86('discard')):
         elif isinstance(ast.nodes[0], Subscript):
             return [Push86(arg_select(ast.nodes[0].expr)), Push86(arg_select(ast.nodes[0].subs[0])),
                     Push86(arg_select(ast.expr)), Call86('set_subscript'), Add86(Const86(12), ESP)]
+        else: raise Exception('unexpected assignee ' + str(ast.nodes[0]))
     elif isinstance(ast, Discard):
         return instr_select(ast.expr)
     elif isinstance(ast, Add):
@@ -376,18 +399,18 @@ def instr_select(ast, write_target=Var86('discard')):
     elif isinstance(ast, UnarySub):
         return [Move86(arg_select(ast.expr), write_target), Neg86(write_target)]
     elif isinstance(ast, CallFunc):
-        return map(lambda a: Push86(arg_select(i)), ast.args) + [Call86(ast.node.name), 
-                                                                 Add86(Const86(4 * len(ast.args)), ESP)]
-        return [Call86('input'), Move86(EAX, write_target)]
+        return map(lambda a: Push86(arg_select(a)), ast.args) + [Call86(ast.node.name), 
+                                                                 Add86(Const86(4 * len(ast.args)), ESP),
+                                                                 Move86(EAX, write_target)]
     elif isinstance(ast, Subscript):
         return [Push86(arg_select(ast.expr)), Push86(arg_select(ast.subs[0])), Call86('get_subscript'),
                 Add86(Const(8), ESP), Move86(EAX, write_target)]
     elif isinstance(ast, Compare):
         inst = SetEq86 if ast.ops[0][0] == '==' else SetNEq86
-        return [Comp86(arg_select(ast.expr), arg_select(ast.ops[0][1])), Move86(Const86(0), EAX), 
+        return [Comp86(arg_select(ast.ops[0][1]), arg_select(ast.expr)), Move86(Const86(0), EAX), 
                 inst(Reg86('al')), Move86(EAX, write_target)]
     elif isinstance(ast, IfStmt):
-        return [Push86(arg_select(ast.test)), Call86('is_true'), Comp86(EAX, Const86(1)), 
+        return [Push86(arg_select(ast.test)), Call86('is_true'), Comp86(Const86(1), EAX), 
                 If86(instr_select(ast.then), instr_select(ast.else_))]
     elif isinstance(ast, InjectFrom):
         if ast.type == BIG_TAG:
@@ -397,6 +420,7 @@ def instr_select(ast, write_target=Var86('discard')):
             tag = arg_select(INT_TAG)
         elif ast.type == BOOL_TAG:
             tag = arg_select(BOOL_TAG)
+        else: raise Exception('unexpected tag ' + str(ast.type))
         return [LShift86(Const86(2), arg_select(ast.expr)), Move86(tag, write_target), 
                 Or86(arg_select(ast.expr), write_target)]
     elif isinstance(ast, ProjectTo):
@@ -407,6 +431,7 @@ def instr_select(ast, write_target=Var86('discard')):
             tag = arg_select(INT_TAG)
         elif ast.type == BOOL_TAG:
             tag = arg_select(BOOL_TAG)
+        else: raise Exception('unexpected tag ' + str(ast.type))
         return [Move86(arg_select(ast.expr), write_target), RShift86(Const86(2), write_target)]
     elif isinstance(ast, GetTag):
         return [Move86(Const86(3), write_target), And86(arg_select(ast.expr), write_target)]
@@ -417,19 +442,40 @@ def instr_select(ast, write_target=Var86('discard')):
     else:
         raise Exception("Unexpected term: " + str(ast))
 
-def compile_string(s):
-    compiler.parse(s)
-    fast = flatten(ast)
-    assembly = instr_select(fast)
+def destructure(instrs):
+    final_instrs = []
+    for instr in instrs:
+        if isinstance(instr, If86):
+            then = destructure(instr.then)
+            else_ = destructure(instr.else_)
+            then_label = new_temp('then_branch')
+            end_label = new_temp('end_if')
+            final_instrs += [JumpIf86(then_label)] + else_ + [Jump86(end_label), Label86(then_label)] + then + [Label86(end_label)]
+        else: final_instrs.append(instr)
+    return final_instrs
 
-    print '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
+def compile_string(s):
+    ast = compiler.parse(s)
+    east = explicate(ast)
+    print east
+    fast = flatten(east)
+    print fast
+    assembly = instr_select(fast)
+    print assembly
+    assembly = regalloc.regalloc(assembly)
+    assembly = destructure(assembly)
+    assembly = '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
+
+    print assembly
 
 def compile_file(file_name, output_name):
     ast = compiler.parseFile(file_name)
-    fast = flatten(ast)
+    east = explicate(ast)
+    fast = flatten(east)
 
     assembly = instr_select(fast)
     assembly = regalloc.regalloc(assembly)
+    assembly = destructure(assembly)
     assembly = '.globl main\nmain:\n\t' + '\n\t'.join(map(str,assembly)) + '\n'
     
     output_file = open(output_name, 'w+')

@@ -72,6 +72,12 @@ class Neg86(X86Inst):
     def mnemonic(self):
         return 'negl ' + self.target.mnemonic()
 
+class Not86(X86Inst):
+    def __init__(self, target):
+        self.target = target
+    def mnemonic(self):
+        return 'notl ' + self.target.mnemonic()
+
 class Call86(X86Inst):
     def __init__(self, function):
         self.function = function
@@ -136,6 +142,12 @@ class JumpIf86(X86Inst):
         self.target = target
     def mnemonic(self):
         return ('je %s' % self.target)
+
+class Label86(X86Inst):
+    def __init__(self, name):
+        self.name = name
+    def mnemonic(self):
+        return self.name + ':'
 
 class If86(X86Inst):
     def __init__(self, then, else_):

@@ -41,9 +41,9 @@ def regalloc(instrs):
 
 def allocate(instrs, colors, unspillable):
 #    print 'Instrs:\n', '\n'.join(map(str, instrs))
-    (l_before, l_after) = liveness(instrs)
-#    print 'L_after:\n', '\n'.join(map(str, l_after))
-    igraph = interference(instrs, l_after)
+    l_after = liveness(instrs)
+    print 'L_after:\n', '\n'.join(map(str, l_after))
+    igraph = interference(l_after)
 #    print 'Interference:\n', '\n'.join(map(lambda (k,v): '%s = %s' % (str(k), str(v)), igraph.items()))
     colors = color(igraph, colors, unspillable)
 #    print 'Coloring:\n', '\n'.join(map(lambda (k,v): '%s = %d' % (str(k), v), colors.items()))
@@ -65,7 +65,7 @@ def liveness(instrs):
     def liveness_analysis(instrs, current_live):
         liveness = []
         for instr in instrs:
-            if isinstance(instr, Add86) or isinstance(instr, Sub86):
+            if isinstance(instr, Add86) or isinstance(instr, Sub86) or isinstance(instr, And86) or isinstance(instr, Or86) or isinstance(instr, LShift86) or isinstance(instr, RShift86):
                 add_varreg(instr.value, current_live)
                 add_varreg(instr.target, current_live)
             elif isinstance(instr, Move86):
@@ -73,50 +73,85 @@ def liveness(instrs):
                 add_varreg(instr.value, current_live)
             elif isinstance(instr, Push86):
                 add_varreg(instr.value, current_live)
-            elif isinstance(instr, Neg86):
+            elif isinstance(instr, Neg86) or isinstance(instr, Not86):
                 add_varreg(instr.target, current_live)
             elif isinstance(instr, Call86):
                 try_remove(EAX, current_live)
                 try_remove(ECX, current_live)
                 try_remove(EDX, current_live)
-            liveness += [current_live.copy()]
+            elif isinstance(instr, Comp86):
+                add_varreg(instr.left, current_live)
+                add_varreg(instr.right, current_live)
+            elif isinstance(instr, SetEq86):
+                try_remove(EAX, current_live)
+            elif isinstance(instr, SetNEq86):
+                try_remove(EAX, current_live)
+            elif isinstance(instr, If86):
+                then = instr.then[:]
+                then.reverse()
+                else_ = instr.else_[:]
+                else_.reverse()
+                thenbefore = liveness_analysis(then, current_live.copy())
+                elsebefore = liveness_analysis(else_, current_live.copy())
+                thenbefore.reverse()
+                elsebefore.reverse()
+                current_live = thenbefore[0][1] | elsebefore[0][1] 
+                liveness += [[thenbefore, elsebefore, current_live.copy()]]
+                continue
+            liveness += [[instr, current_live.copy()]]
         return liveness
     instrs = instrs[:]
     instrs.reverse()
     l_before = liveness_analysis(instrs, set([]))
+    def make_after(l_before, initlast):
+        last = initlast
+        for i in xrange(len(l_before)):
+            instr = l_before[i]
+            if isinstance(instr[0], list):
+                then_after = make_after(instr[0], last)
+                else_after = make_after(instr[1], last)
+                last = instr[2]
+            else:
+                temp = l_before[i][1]
+                l_before[i][1] = last
+                last = temp
+    make_after(l_before, set([]))
     l_before.reverse()
-    l_after = l_before[1:]
-    l_after.append(set([]))
-    return (l_before, l_after)
+    return l_before
 
-def interference(instrs, l_after):
+def interference(l_after):
     igraph = { 'eax' : set([]), 'ecx' : set([]), 'edx' : set([]) }
     def valid_node(v):
         return isinstance(v, Reg86) or isinstance(v, Var86)
     def add_edge(t, s):
         igraph[t].add(s)
         igraph[s].add(t)
-    for instr in instrs:
-        if isinstance(instr, Move86) or isinstance(instr, Add86) or isinstance(instr, Sub86):
-            if valid_node(instr.value):
-                igraph[name(instr.value)] = set([])
-            if valid_node(instr.target):
-                igraph[name(instr.target)] = set([])
-        if isinstance(instr, Push86):
-            if valid_node(instr.value):
-                igraph[name(instr.value)] = set([])
-        if isinstance(instr, Neg86):
-            if valid_node(instr.target):
-                igraph[name(instr.target)] = set([])
-    for (instr, live) in zip(instrs, l_after):
+    def fill_igraph(live_vars, igraph):
+        for live in live_vars:
+            if isinstance(live[0], list):
+                fill_igraph(live[0], igraph)
+                fill_igraph(live[1], igraph)
+            else:
+                for v in live[1]:
+                    igraph[v] = set([])
+    fill_igraph(l_after, igraph)
+    for inslive in l_after:
+        instr = inslive[0]
+        live = inslive[1]
         if isinstance(instr, Move86) and valid_node(instr.target) and name(instr.target) in live:
             for v in live:
                 if v != name(instr.target) and ((not valid_node(instr.value)) or v != name(instr.value)):
                     add_edge(name(instr.target), v)
-        elif (isinstance(instr, Add86) or isinstance(instr, Sub86) or isinstance(instr, Neg86)) and valid_node(instr.target) and name(instr.target) in live:
+        elif (isinstance(instr, Add86) or isinstance(instr, Sub86) or isinstance(instr, Neg86) or isinstance(instr, Not86) or isinstance(instr, And86) or isinstance(instr, Or86) or isinstance(instr, LShift86) or isinstance(instr, RShift86)) and valid_node(instr.target) and name(instr.target) in live:
             for v in live:
                 if v != name(instr.target):
                     add_edge(name(instr.target), v)
+        elif isinstance(instr, Comp86):
+            for v in live:
+                if valid_node(instr.left) and v != name(instr.left):
+                    add_edge(name(instr.left), v)
+                if valid_node(instr.right) and v != name(instr.right):
+                    add_edge(name(instr.right), v)
         elif isinstance(instr, Push86) and valid_node(instr.value):
             for v in live:
                 if v != name(instr.value):
@@ -129,6 +164,16 @@ def interference(instrs, l_after):
                     add_edge(name(ECX), v)
                 if v != name(EDX):
                     add_edge(name(EDX), v)
+        elif isinstance(instr, list):
+            thenlive, elselive, live = inslive
+            then_igraph = interference(thenlive)
+            else_igraph = interference(elselive)
+            for v in then_igraph:
+                if v in igraph:
+                    igraph[v] = igraph[v] | then_igraph[v]
+            for v in else_igraph:
+                if v in igraph:
+                    igraph[v] = igraph[v] | else_igraph[v]
     return igraph
 
 def color(igraph, colors, unspillable):
@@ -171,7 +216,10 @@ def location_select(instrs, colors):
             return Mem86(memloc * 4, EBP)
     def arg_select(arg):
         if isinstance(arg, Var86):
-            return select_location(colors[name(arg)])
+            try:
+                return select_location(colors[name(arg)])
+            except KeyError:
+                return select_location(colors[name(arg)])
         else: return arg
     def instr_select(instr):
         if isinstance(instr, Move86):
@@ -182,8 +230,26 @@ def location_select(instrs, colors):
             return Sub86(arg_select(instr.value), arg_select(instr.target))
         elif isinstance(instr, Neg86):
             return Neg86(arg_select(instr.target))
+        elif isinstance(instr, Not86):
+            return Not86(arg_select(instr.target))
         elif isinstance(instr, Push86):
             return Push86(arg_select(instr.value))
+        elif isinstance(instr, And86):
+            return And86(arg_select(instr.value), arg_select(instr.target))
+        elif isinstance(instr, Or86):
+            return Or86(arg_select(instr.value), arg_select(instr.target))
+        elif isinstance(instr, LShift86):
+            return LShift86(arg_select(instr.value), arg_select(instr.target))
+        elif isinstance(instr, RShift86):
+            return RShift86(arg_select(instr.value), arg_select(instr.target))
+        elif isinstance(instr, Comp86):
+            return Comp86(arg_select(instr.left), arg_select(instr.right))
+        elif isinstance(instr, SetEq86):
+            return SetEq86(arg_select(instr.target))
+        elif isinstance(instr, SetNEq86):
+            return SetNEq86(arg_select(instr.target))
+        elif isinstance(instr, If86):
+            return If86(location_select(instr.then, colors), location_select(instr.else_, colors))
         else: return instr
     return map(instr_select, instrs)
 
@@ -191,9 +257,11 @@ def spills(instrs):
     spill_lines = []
     for i in xrange(len(instrs)):
         instr = instrs[i]
-        binary = isinstance(instr, Move86) or isinstance(instr, Add86) or isinstance(instr, Sub86)
-        if binary and isinstance(instr.value, Mem86) and isinstance(instr.target, Mem86) and instr.target != instr.value:
+        binary = isinstance(instr, Move86) or isinstance(instr, Add86) or isinstance(instr, Sub86) or isinstance(instr, And86) or isinstance(instr, Or86) or isinstance(instr, LShift86) or isinstance(instr, RShift86)
+        if binary and isinstance(instr.value, Mem86) and isinstance(instr.target, Mem86):
             spill_lines.append(i)
+        elif isinstance(instr, Comp86) and isinstance(instr.left, Mem86) and isinstance(instr.right, Mem86):
+            spill_lines.append(i) 
     return spill_lines
 
 def generate_spills(instrs, spill_lines):
@@ -203,8 +271,12 @@ def generate_spills(instrs, spill_lines):
     for i in spill_lines:
         i += offset
         temp = new_temp('spill')
-        lhs = instrs[i].value
-        instrs[i].value = Var86(temp)
+        if isinstance(instrs[i], Comp86):
+            lhs = instrs[i].left
+            instrs[i].left = Var86(temp)
+        else:
+            lhs = instrs[i].value
+            instrs[i].value = Var86(temp)
         instrs.insert(i, Move86(lhs, Var86(temp)))
         unspillables.append(temp)
         offset += 1
